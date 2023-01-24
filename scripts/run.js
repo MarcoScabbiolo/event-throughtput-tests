@@ -43,6 +43,19 @@ const LANGUAGES = [
     runCommand: (messageCount) => `node index.js ${messageCount}`,
     color: '#F0DB4F',
     textColor: '#323330',
+  },
+  {
+    id: 'kotlin-spring',
+    name: 'Spring',
+    srcDir: 'kotlin',
+    cwd: resolve(ROOT, './kotlin'),
+    buildCommand: './gradlew build',
+    messageCount: Math.floor(MESSAGE_COUNT / 10),
+    timeMagnitude: 'seconds',
+    timestampRegex: '((\\S)+)',
+    runCommand: (messageCount) => `java -jar build/libs/demo-0.0.1-SNAPSHOT.jar --count=${messageCount}`,
+    color: '#6db33f',
+    textColor: '#FFF'
   }
 ]
 

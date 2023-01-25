@@ -5,6 +5,7 @@ In the root dir you can find a folder for each language, currently:
 - `rust`
 - `js`
 - `kotlin (spring)`
+- `kotlin (quarkus)`
 
 Architecture and "complexity" can be exaggerated to make the most out of the language as long as performance is optimal and (legi/scala/maintaina)bility is improved. Esoteric factors like number of lines are considered irrelevant.
 
@@ -21,6 +22,7 @@ Make sure you have installed the following:
 - `yarn`
 - `rust` + `cargo`
 - `java 17`
+- `quarkus`
 
 Many actions are done through the `scripts`. Run `yarn` on that folder to be able to use the repo.
 

@@ -4,6 +4,8 @@ import moment from 'moment'
 import * as url from 'url';
 import ora from 'ora'
 import chalk from 'chalk'
+import * as readline from 'readline'
+import { MongoClient } from "mongodb"
 
 const parseArgument = (arg) => arg && (arg.startsWith('-') ? null : arg)
 
@@ -11,7 +13,9 @@ const parseArgument = (arg) => arg && (arg.startsWith('-') ? null : arg)
 const WAIT_FOR_DOCKER_TIMEOUT = 1000 * 10
 const WAIT_TO_DUMP_DATA_TIMEOUT = 1000 * 10
 const VERBOSE = process.argv.some(a => a === '-v' || a === '--verbose')
-const MESSAGE_COUNT = process.argv[2]
+const DONT_RUN = process.argv.some(a => a === '--dont-run')
+const CONFIRM_INBETWEEN_RUNS = process.argv.some(a => a === '-c' || a === '--confirm')
+const MESSAGE_COUNT = Number(process.argv[2])
 const LANGUAGE = parseArgument(process.argv[3])
 
 const ROOT = resolve(url.fileURLToPath(new URL('.', import.meta.url)), '../')
@@ -47,8 +51,8 @@ const LANGUAGES = [
   {
     id: 'kotlin-spring',
     name: 'Spring',
-    srcDir: 'kotlin',
-    cwd: resolve(ROOT, './kotlin'),
+    srcDir: 'kotlin/spring',
+    cwd: resolve(ROOT, './kotlin/spring'),
     buildCommand: './gradlew build',
     messageCount: Math.floor(MESSAGE_COUNT / 10),
     timeMagnitude: 'seconds',
@@ -56,6 +60,19 @@ const LANGUAGES = [
     runCommand: (messageCount) => `java -jar build/libs/demo-0.0.1-SNAPSHOT.jar --count=${messageCount}`,
     color: '#6db33f',
     textColor: '#FFF'
+  },
+  {
+    id: 'kotlin-quarkus',
+    name: 'Quarkus',
+    srcDir: 'kotlin/quarkus',
+    cwd: resolve(ROOT, './kotlin/quarkus'),
+    buildCommand: 'quarkus build --native',
+    messageCount: Math.floor(MESSAGE_COUNT / 10),
+    timeMagnitude: 'seconds',
+    timestampRegex: '(\\S+\\s\\S+)',
+    runCommand: (messageCount) => `./build/code-with-quarkus-1.0.0-SNAPSHOT-runner`,
+    color: '#4695eb',
+    textColor: '#ff004a'
   }
 ]
 
@@ -82,10 +99,24 @@ let spinner = ora({ spinner: 'sand', color: 'green' })
     infra = await setup(language.messageCount)
     spinner.text = 'Building ' + language.name
     await execaCommand(language.buildCommand, { cwd: language.cwd })
-    spinner.text = 'Executing ' + language.name
-    await runLanguage(language, infra)
+    if (DONT_RUN) {
+      spinner.clear()
+      console.log('All built and infra running, would have ran:')
+      console.log(language.runCommand(language.messageCount))
+      spinner.text = 'Press any key to create the messages'
+      await waitForPrompt('')
+      await dumpData(language)
+      await waitForTomorrow()
+    } else {
+      spinner.text = 'Executing ' + language.name
+      await runLanguage(language, infra)
+    }
   }
 
+  spinner.text = 'Cleaning up infrastructure'
+  spinner.start()
+  await cleanup()
+  spinner.clear()
   process.exit(0)
 })()
 
@@ -100,7 +131,7 @@ const runLanguage = async (language, infra) => {
       if (VERBOSE) console.log(data.toString())
       if (data.includes(`Processed ${language.messageCount} messages`)) {
         const matches = new RegExp(language.timestampRegex).exec(data)
-        const diff = moment(matches[1]).diff(start, language.timeMagnitude)
+        const diff = moment(matches[1], language.dateTimeFormat).diff(start, language.timeMagnitude)
         const diffText = `${diff} ${language.timeMagnitude}`
         resolve(chalk[TIME_MAGNITUDE_COLORS[language.timeMagnitude]](diffText))
       }
@@ -111,18 +142,45 @@ const runLanguage = async (language, infra) => {
 
   await wait(WAIT_TO_DUMP_DATA_TIMEOUT)
   start = moment()
-  await execaCommand(`docker exec performance-test-kafka sh ./load-data.sh ${language.id}`)
+  await dumpData(language)
 
   const timePassed = await checkpointReached
+
+  spinner.text = 'Validating results'
+  await wait(5000)
+
+  const docCount = await new MongoClient('mongodb://root:example@localhost:27017')
+    .db('performance-test')
+    .collection('models')
+    .countDocuments();
+
   spinner.clear()
-  console.log(
-    chalk.bgHex(language.color).hex(language.textColor).bold(` ${language.name} `) +
-    chalk.white(' took ') +
-    timePassed +
-    chalk.white(' to process ') +
-    chalk[language.messageCount >= MESSAGE_COUNT ? 'green' : 'yellow'].bold(language.messageCount) +
-    chalk.white(' messages ')
-  )
+
+  if (docCount >= language.messageCount) {
+    console.log(
+      languageConsoleName(language) +
+      chalk.white(' took ') +
+      timePassed +
+      chalk.white(' to process ') +
+      chalk[language.messageCount >= MESSAGE_COUNT ? 'green' : 'yellow'].bold(language.messageCount) +
+      chalk.white(' messages ')
+    )
+  } else {
+    console.log(
+      languageConsoleName(language) +
+      chalk.bold.red(' failed ') +
+      chalk.white('to load all documents in the database') +
+      chalk.white('. Expected ') +
+      chalk.bold.green(language.messageCount) +
+      chalk.white(' documents but found ') +
+      chalk.bold.red(docCount)
+    )
+  }
+
+  if (CONFIRM_INBETWEEN_RUNS) {
+    spinner.text = 'Press any key to continue'
+    await waitForPrompt('')
+  }
 
   command.cancel()
   infra.endpoint.cancel()
@@ -130,11 +188,40 @@ const runLanguage = async (language, infra) => {
 }
 
 const setup = async (messageCount) => {
-  await execaCommand("docker-compose down", { cwd: ROOT })
+  await cleanup()
   await execaCommand(`node ./scripts/make-data.js ${messageCount}`, { cwd: ROOT })
 
   const endpoint = execaCommand("yarn start", { cwd: ENDPOINT })
   const docker = execaCommand("docker-compose up", { cwd: ROOT })
 
   return { endpoint, docker }
+}
+
+const dumpData = async (language) => {
+  await execaCommand(`docker exec performance-test-kafka sh ./load-data.sh ${language.id}`)
+}
+
+const cleanup = async () => {
+  await execaCommand("docker-compose down", { cwd: ROOT })
+}
+
+const waitForPrompt = (query) => {
+  const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+  });
+
+  return new Promise(resolve => rl.question(query, ans => {
+      rl.close();
+      resolve(ans);
+  }))
+}
+
+const languageConsoleName = (language) =>
+  chalk.bgHex(language.color).hex(language.textColor).bold(` ${language.name} `)
+
+const waitForTomorrow = async () => {
+  spinner.text = 'Waiting for tomorrow'
+  spinner.start()
+  await wait(1000 * 60 * 60 * 24)
 }

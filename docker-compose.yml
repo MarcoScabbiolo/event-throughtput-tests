@@ -40,6 +40,7 @@ services:
       kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic rust --partitions 10
       kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic javascript --partitions 10
       kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic kotlin-spring --partitions 10
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic kotlin-quarkus --partitions 10
 
       echo -e 'Successfully created the following topics:'
       kafka-topics --bootstrap-server kafka:9092 --list
